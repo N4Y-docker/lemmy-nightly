@@ -1,0 +1,48 @@
+name: Sync fork
+
+on:
+  schedule:
+    - cron: "41 19 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout current fork HEAD
+        uses: actions/checkout@v4.1.5
+        with:
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Set up upstream git remote
+        run: |
+          upstream="$(gh repo view "${{ github.repository }}" --json parent --jq '.parent.owner.login + "/" + .parent.name')"
+          echo "upstream=$upstream"
+          git remote add upstream "https://github.com/$upstream.git"
+          git fetch upstream "${{ github.event.repository.default_branch }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Determine number of missing commits from usptream
+        id: check-missing-commits
+        run: |
+          upstream_commit_count="$(git rev-list --count "$GITHUB_REF_NAME..upstream/${{ github.event.repository.default_branch }}")"
+          echo "commit-count=$upstream_commit_count" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Rebase and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git rebase --committer-date-is-author-date "upstream/${{ github.event.repository.default_branch }}"
+
+          git push --force
+        if: >-
+          fromJSON(steps.check-missing-commits.outputs.commit-count) > 0
