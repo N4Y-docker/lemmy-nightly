@@ -1,0 +1,27 @@
+name: multi-flavor-builds
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  trigger-alternative-builds:
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        variant:
+          # default image
+          - image-suffix: ""
+            cargo-features: ""
+          - image-suffix: json-log
+            cargo-features: json-log
+
+    uses: ./.github/workflows/ghcr-image-main-fork.yml
+    with:
+      image-suffix: ${{ matrix.variant.image-suffix }}
+      cargo-features: ${{ matrix.variant.cargo-features }}
