@@ -1,14 +1,20 @@
 name: ghcr-image-main
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      image-suffix:
+        required: false
+        type: string
+        default: ""
+      cargo-features:
+        required: false
+        type: string
+        default: ""
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }}${{ inputs.image-suffix != '' && '/' || '' }}${{ inputs.image-suffix }}
   IMAGE_TAG: nightly
 
 jobs:
@@ -22,6 +28,9 @@ jobs:
       annotations: ${{ steps.meta.outputs.annotations }}
       json: ${{ steps.meta.outputs.json }}
       image-name: ${{ steps.custom-meta.outputs.image-name }}
+
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout current fork HEAD
@@ -74,6 +83,10 @@ jobs:
     needs:
       - meta
 
+    permissions:
+      contents: read
+      packages: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -117,8 +130,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          build-args:
+          build-args: |
             RUST_RELEASE_MODE=release
+            ${{ inputs.cargo-features != '' && format('CARGO_BUILD_FEATURES={0}', inputs.cargo-features) || '' }}
           platforms: ${{ matrix.platform }}
           labels: ${{ needs.meta.outputs.labels }}
           annotations: ${{ needs.meta.outputs.annotations }}
@@ -137,7 +151,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4.3.3
         with:
-          name: digests-${{ steps.meta.outputs.platform-pair }}
+          name: digests-${{ inputs.image-suffix != '' && inputs.image-suffix || '_default_' }}-${{ steps.meta.outputs.platform-pair }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -162,7 +176,7 @@ jobs:
         uses: actions/download-artifact@v4.1.7
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-${{ inputs.image-suffix != '' && inputs.image-suffix || '_default_' }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
