@@ -1,0 +1,112 @@
+name: Run Lemmy tests
+
+on:
+  push:
+    branches:
+      - main
+      - release/v0.19
+      - tests
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI_RUST_VERSION: "1.81"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout current fork HEAD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          show-progress: false
+          submodules: recursive
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+          package_json_file: api_tests/package.json
+
+      - name: Setup Node.JS environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: pnpm
+          cache-dependency-path: api_tests/pnpm-lock.yaml
+
+      - name: Run Prettier
+        run: >-
+          pnpm dlx
+          prettier
+          -c .
+          '!**/volumes'
+          '!**/dist'
+          '!target'
+          '!**/translations'
+          '!api_tests/pnpm-lock.yaml'
+
+      - name: Check TOML format
+        run: >-
+          pnpm dlx
+          @taplo/cli
+          format --check
+
+      - name: Run SQL formatter
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get --yes --no-install-recommends --no-install-suggests install pgformatter
+          ./scripts/sql_format_check.sh
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: |
+            lint-rust-cargo-cache-${{ env.CI_RUST_VERSION }}-${{ hashFiles('**/Cargo.lock', '.woodpecker.yml') }}
+          restore-keys: |
+            lint-rust-cargo-cache-${{ env.CI_RUST_VERSION }}-
+
+      - name: Set up Rust with rustup
+        run: |
+          rustup default "$CI_RUST_VERSION"
+          rustup component add clippy
+          rustup component add --toolchain nightly rustfmt
+
+      - name: Run cargo fmt
+        run: cargo +nightly fmt -- --check
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Run cargo shear
+        run: |
+          set -x
+          cargo binstall cargo-shear
+          cargo shear
+
+      - name: Check for ignored files
+        run: |
+          set -x
+          IGNORED=$(git ls-files --cached -i --exclude-standard)
+          if [[ "$IGNORED" ]]; then echo "Ignored files present:\n$IGNORED\n"; exit 1; fi
+
+      - name: Check for empty files
+        run: |
+          set -x
+          EMPTY_FILES=$(find crates migrations api_tests/src config -type f -size -2c)
+          if [[ "$EMPTY_FILES" ]]; then echo "Empty files present:\n$EMPTY_FILES\n"; exit 1; fi
+
+      - name: Run clippy
+        run: cargo clippy --workspace --tests --all-targets -- -D warnings
